@@ -3,7 +3,6 @@ import json
 import subprocess
 import time
 
-# ✅ Configuration
 PLAY_FILE = "play.json"
 RTMP_URL = os.getenv("RTMP_URL")
 OVERLAY = os.path.abspath("overlay.png")
@@ -11,7 +10,6 @@ FONT_PATH = os.path.abspath("Roboto-Black.ttf")
 RETRY_DELAY = 60
 PREBUFFER_SECONDS = 5
 
-# ✅ Sanity Checks
 if not RTMP_URL:
     print("❌ ERROR: RTMP_URL is not set!")
     exit(1)
@@ -35,7 +33,6 @@ def escape_drawtext(text):
 def build_ffmpeg_command(url, title):
     text = escape_drawtext(title)
 
-    # ✅ Always spoof VLC User-Agent for all formats
     input_options = [
         "-user_agent", "VLC/3.0.18 LibVLC/3.0.18",
         "-headers", "Referer: https://hollymoviehd.cc\r\n"
@@ -49,13 +46,28 @@ def build_ffmpeg_command(url, title):
         "-threads", "1",
         "-ss", str(PREBUFFER_SECONDS),
         *input_options,
-        "-i", url,             # Works with mkv, mp4, avi, mov, m3u8, etc.
+        "-i", url,
         "-i", OVERLAY,
+
+        # -----------------------------------------------------------
+        # ALWAYS enable ENGLISH subtitles only
+        # If English subs exist → mapped
+        # If not → skip without error
+        # -----------------------------------------------------------
+        "-map", "0:v",
+        "-map", "0:a?",
+        "-map", "0:s:m:language:eng?",   # English-only subtitles
+        "-c:s", "copy",
+
         "-filter_complex",
-        f"[0:v]scale=1280:720:flags=lanczos,unsharp=5:5:0.8:5:5:0.0[v];"
-        f"[1:v]scale=1280:720[ol];"
-        f"[v][ol]overlay=0:0[vo];"
-        f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=20:x=35:y=35",
+        (
+            "[0:v]scale=1280:720:flags=lanczos,unsharp=5:5:0.8:5:5:0.0[v];"
+            "[1:v]scale=1280:720[ol];"
+            "[v][ol]overlay=0:0[vo];"
+            f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':"
+            "fontcolor=white:fontsize=20:x=35:y=35"
+        ),
+
         "-r", "29.97",
         "-c:v", "libx264",
         "-preset", "ultrafast",
@@ -94,7 +106,7 @@ def stream_movie(movie):
                 process.kill()
                 return
             print(line.strip())
-        process.wait()  # ✅ Waits for full movie to finish
+        process.wait()
     except Exception as e:
         print(f"❌ FFmpeg crashed: {e}")
 
