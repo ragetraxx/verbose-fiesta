@@ -37,8 +37,8 @@ def build_ffmpeg_command(url, title):
 
     # ✅ Always spoof VLC User-Agent for all formats
     input_options = [
-        "-user_agent", "VLC/3.0.18 LibVLC/3.0.18",
-        "-headers", "Referer: https://hollymoviehd.cc\r\n"
+        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "-headers", "Referer: https://www.imsa.com\r\n"
     ]
 
     return [
