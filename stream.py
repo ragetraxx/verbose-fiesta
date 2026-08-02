@@ -35,27 +35,32 @@ def escape_drawtext(text):
 def build_ffmpeg_command(url, title):
     text = escape_drawtext(title)
 
-    # ✅ Always spoof VLC User-Agent for all formats
+    # ✅ Optimized input options for remote HLS streaming
     input_options = [
+        "-reconnect", "1",
+        "-reconnect_at_eof", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
+        "-rw_timeout", "15000000",
         "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
         "-headers", "Referer: https://www.imsa.com\r\n"
     ]
 
     return [
         "ffmpeg",
-        "-re",
-        "-fflags", "+nobuffer",
-        "-flags", "low_delay",
-        "-threads", "1",
+        "-threads", "0",                  # ✅ Allow auto multi-threading for decoding
+        "-re",                           # Read input at native frame rate
         "-ss", str(PREBUFFER_SECONDS),
         *input_options,
-        "-i", url,             # Works with mkv, mp4, avi, mov, m3u8, etc.
+        "-i", url,
         "-i", OVERLAY,
         "-filter_complex",
-        f"[0:v]scale=1280:720:flags=lanczos,unsharp=5:5:0.8:5:5:0.0[v];"
+        f"[0:v]scale=1280:720:flags=bicubic[v];"
         f"[1:v]scale=1280:720[ol];"
         f"[v][ol]overlay=0:0[vo];"
-        f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=20:x=35:y=35",
+        f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=20:x=35:y=35[outv]",
+        "-map", "[outv]",
+        "-map", "0:a?",                   # ✅ Map audio cleanly from the first input
         "-r", "29.97",
         "-c:v", "libx264",
         "-preset", "ultrafast",
@@ -63,9 +68,9 @@ def build_ffmpeg_command(url, title):
         "-g", "60",
         "-keyint_min", "60",
         "-sc_threshold", "0",
-        "-b:v", "5000k",
-        "-maxrate", "6500k",
-        "-bufsize", "6500k",
+        "-b:v", "4000k",                 # ✅ Adjusted bitrate
+        "-maxrate", "5000k",             # ✅ Peak bitrate
+        "-bufsize", "10000k",            # ✅ Double maxrate for smooth network buffer
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
@@ -94,7 +99,7 @@ def stream_movie(movie):
                 process.kill()
                 return
             print(line.strip())
-        process.wait()  # ✅ Waits for full movie to finish
+        process.wait()
     except Exception as e:
         print(f"❌ FFmpeg crashed: {e}")
 
