@@ -11,6 +11,10 @@ FONT_PATH = os.path.abspath("Roboto-Black.ttf")
 RETRY_DELAY = 60
 PREBUFFER_SECONDS = 5
 
+# ✅ Header Configurations
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+REFERER = "https://www.imsa.com/"
+
 # ✅ Sanity Checks
 if not RTMP_URL:
     print("❌ ERROR: RTMP_URL is not set!")
@@ -35,21 +39,23 @@ def escape_drawtext(text):
 def build_ffmpeg_command(url, title):
     text = escape_drawtext(title)
 
-    # ✅ Optimized input options for remote HLS streaming
+    # ✅ Strict HTTP User-Agent & Referer configuration for HLS/CloudFront
     input_options = [
+        "-user_agent", USER_AGENT,
+        "-headers", f"Referer: {REFERER}\r\nUser-Agent: {USER_AGENT}\r\n",
+        "-http_persistent", "0",            # Disable persistent HTTP connections to stop 502 Bad Gateways
         "-reconnect", "1",
         "-reconnect_at_eof", "1",
         "-reconnect_streamed", "1",
-        "-reconnect_delay_max", "5",
-        "-rw_timeout", "15000000",
-        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-        "-headers", "Referer: https://www.imsa.com\r\n"
+        "-reconnect_delay_max", "10",
+        "-rw_timeout", "15000000",          # 15s timeout
+        "-max_reload", "10"
     ]
 
     return [
         "ffmpeg",
-        "-threads", "0",                  # ✅ Allow auto multi-threading for decoding
-        "-re",                           # Read input at native frame rate
+        "-threads", "0",
+        "-re",
         "-ss", str(PREBUFFER_SECONDS),
         *input_options,
         "-i", url,
@@ -60,7 +66,7 @@ def build_ffmpeg_command(url, title):
         f"[v][ol]overlay=0:0[vo];"
         f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=20:x=35:y=35[outv]",
         "-map", "[outv]",
-        "-map", "0:a?",                   # ✅ Map audio cleanly from the first input
+        "-map", "0:a?",
         "-r", "29.97",
         "-c:v", "libx264",
         "-preset", "ultrafast",
@@ -68,9 +74,9 @@ def build_ffmpeg_command(url, title):
         "-g", "60",
         "-keyint_min", "60",
         "-sc_threshold", "0",
-        "-b:v", "4000k",                 # ✅ Adjusted bitrate
-        "-maxrate", "5000k",             # ✅ Peak bitrate
-        "-bufsize", "10000k",            # ✅ Double maxrate for smooth network buffer
+        "-b:v", "4000k",
+        "-maxrate", "5000k",
+        "-bufsize", "10000k",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
@@ -94,8 +100,16 @@ def stream_movie(movie):
     try:
         process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         for line in process.stderr:
+            if "404 Not Found" in line:
+                print(f"⚠️ 404 Not Found! Segment/Playlist expired for: {title}")
+                process.kill()
+                return
+            if "502 Bad Gateway" in line:
+                print(f"⚠️ 502 Bad Gateway! CloudFront error for: {title}")
+                process.kill()
+                return
             if "403 Forbidden" in line:
-                print(f"🚫 403 Forbidden! Skipping: {title}")
+                print(f"🚫 403 Forbidden! Referer/User-Agent rejected for: {title}")
                 process.kill()
                 return
             print(line.strip())
