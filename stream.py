@@ -11,10 +11,6 @@ FONT_PATH = os.path.abspath("Roboto-Black.ttf")
 RETRY_DELAY = 60
 PREBUFFER_SECONDS = 5
 
-# ✅ Header Configurations
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-REFERER = "https://www.imsa.com/"
-
 # ✅ Sanity Checks
 if not RTMP_URL:
     print("❌ ERROR: RTMP_URL is not set!")
@@ -39,34 +35,27 @@ def escape_drawtext(text):
 def build_ffmpeg_command(url, title):
     text = escape_drawtext(title)
 
-    # ✅ Strict HTTP User-Agent & Referer configuration for HLS/CloudFront
+    # ✅ Always spoof Chrome User-Agent for all formats
     input_options = [
-        "-user_agent", USER_AGENT,
-        "-headers", f"Referer: {REFERER}\r\nUser-Agent: {USER_AGENT}\r\n",
-        "-http_persistent", "0",            # Disable persistent HTTP connections to stop 502 Bad Gateways
-        "-reconnect", "1",
-        "-reconnect_at_eof", "1",
-        "-reconnect_streamed", "1",
-        "-reconnect_delay_max", "10",
-        "-rw_timeout", "15000000",          # 15s timeout
-        "-max_reload", "10"
+        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "-headers", "Referer: https://imsa.com\r\n"
     ]
 
     return [
         "ffmpeg",
-        "-threads", "0",
         "-re",
+        "-fflags", "+nobuffer",
+        "-flags", "low_delay",
+        "-threads", "1",
         "-ss", str(PREBUFFER_SECONDS),
         *input_options,
-        "-i", url,
+        "-i", url,             # Works with mkv, mp4, avi, mov, m3u8, etc.
         "-i", OVERLAY,
         "-filter_complex",
-        f"[0:v]scale=1280:720:flags=bicubic[v];"
+        f"[0:v]scale=1280:720:flags=lanczos,unsharp=5:5:0.8:5:5:0.0[v];"
         f"[1:v]scale=1280:720[ol];"
         f"[v][ol]overlay=0:0[vo];"
-        f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=20:x=35:y=35[outv]",
-        "-map", "[outv]",
-        "-map", "0:a?",
+        f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=20:x=35:y=35",
         "-r", "29.97",
         "-c:v", "libx264",
         "-preset", "ultrafast",
@@ -74,9 +63,9 @@ def build_ffmpeg_command(url, title):
         "-g", "60",
         "-keyint_min", "60",
         "-sc_threshold", "0",
-        "-b:v", "4000k",
-        "-maxrate", "5000k",
-        "-bufsize", "10000k",
+        "-b:v", "2000k",
+        "-maxrate", "3500k",
+        "-bufsize", "3500k",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
@@ -100,20 +89,12 @@ def stream_movie(movie):
     try:
         process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         for line in process.stderr:
-            if "404 Not Found" in line:
-                print(f"⚠️ 404 Not Found! Segment/Playlist expired for: {title}")
-                process.kill()
-                return
-            if "502 Bad Gateway" in line:
-                print(f"⚠️ 502 Bad Gateway! CloudFront error for: {title}")
-                process.kill()
-                return
             if "403 Forbidden" in line:
-                print(f"🚫 403 Forbidden! Referer/User-Agent rejected for: {title}")
+                print(f"🚫 403 Forbidden! Skipping: {title}")
                 process.kill()
                 return
             print(line.strip())
-        process.wait()
+        process.wait()  # ✅ Waits for full movie to finish
     except Exception as e:
         print(f"❌ FFmpeg crashed: {e}")
 
