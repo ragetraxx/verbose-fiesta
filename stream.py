@@ -9,6 +9,7 @@ RTMP_URL = os.getenv("RTMP_URL")
 OVERLAY = os.path.abspath("overlay.png")
 FONT_PATH = os.path.abspath("Roboto-Black.ttf")
 RETRY_DELAY = 60
+PREBUFFER_SECONDS = 5
 
 # ✅ Sanity Checks
 if not RTMP_URL:
@@ -31,62 +32,50 @@ def load_movies():
 def escape_drawtext(text):
     return text.replace('\\', '\\\\\\\\').replace(':', '\\:').replace("'", "\\'")
 
-def build_ffmpeg_command(movie):
-    title = movie.get("title", "Untitled")
-    url = movie.get("url")
+def build_ffmpeg_command(url, title):
     text = escape_drawtext(title)
 
-    # ✅ Network input options (compatible with direct MP4, MKV, M3U8, HLS streams)
-    input_options = [
-        "-reconnect", "1",
-        "-reconnect_at_eof", "1",
-        "-reconnect_streamed", "1",
-        "-reconnect_delay_max", "5",
-        "-analyzeduration", "10000000",
-        "-probesize", "10000000",
-        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-    ]
-
-    # ✅ Optional: Dynamically attach custom referer/headers if specified in play.json entry
-    referer = movie.get("referer")
-    custom_headers = movie.get("headers")
-    header_str = ""
-    if referer:
-        header_str += f"Referer: {referer}\r\n"
-    if custom_headers:
-        header_str += f"{custom_headers}\r\n"
-    if header_str:
-        input_options.extend(["-headers", header_str])
+    input_options = []
+    if ".m3u8" in url or "streamsvr" in url:
+        print(f"🔐 Spoofing headers for {url}")
+        input_options = [
+            "-user_agent", "Mozilla/5.0",
+            "-headers", "Referer: https://hollymoviehd.cc\r\n"
+        ]
 
     return [
         "ffmpeg",
-        "-re",                           # ✅ Fixed: -re MUST be placed before input (-i)
-        "-fflags", "+genpts+discardcorrupt",
+        "-re",
+        "-fflags", "+nobuffer",
+        "-flags", "low_delay",
+        "-threads", "1",
+        "-ss", str(PREBUFFER_SECONDS),
         *input_options,
-        "-thread_queue_size", "4096",    # Input buffer to absorb network latency spikes
         "-i", url,
-        "-thread_queue_size", "1024",
         "-i", OVERLAY,
         "-filter_complex",
-        f"[0:v]scale=1280:720:flags=bicubic[v];"
-        f"[1:v]scale=1280:720[ol];"
+        f"[0:v]scale=1024:576:flags=lanczos,unsharp=5:5:0.8:5:5:0.0[v];"
+        f"[1:v]scale=1024:576[ol];"
         f"[v][ol]overlay=0:0[vo];"
-        f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=20:x=35:y=35",
-        "-r", "29.97",
+        f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=15:x=35:y=35",
+        "-r", "29.97003",
         "-c:v", "libx264",
-        "-preset", "veryfast",           # Fast, efficient H.264 encoding
-        "-g", "60",                      # Fixed 2-second keyframe interval
+        "-profile:v", "high",
+        "-level:v", "3.2",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+        "-g", "60",
         "-keyint_min", "60",
         "-sc_threshold", "0",
-        "-b:v", "2500k",                 # Stable target bitrate
-        "-maxrate", "3000k",
-        "-bufsize", "3000k",             # 2-second rate control buffer
+        "-b:v", "1000k",
+        "-maxrate", "1300k",
+        "-bufsize", "1300k",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
+        "-profile:a", "aac_low",
         "-b:a", "128k",
         "-ar", "48000",
         "-ac", "2",
-        "-af", "aresample=async=1",      # Keeps audio tightly synchronized with video
         "-f", "flv",
         RTMP_URL
     ]
@@ -99,33 +88,34 @@ def stream_movie(movie):
         print(f"❌ Skipping '{title}': no URL")
         return
 
-    print(f"🎬 Now streaming: {title}")
-    command = build_ffmpeg_command(movie)
+    print(f"🎬 Streaming: {title}")
+    command = build_ffmpeg_command(url, title)
 
     try:
         process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         for line in process.stderr:
-            if "403 Forbidden" in line or "404 Not Found" in line or "Server returned 404" in line:
-                print(f"🚫 Stream URL error (403/404)! Skipping: {title}")
+            if "403 Forbidden" in line:
+                print(f"🚫 403 Forbidden! Skipping: {title}")
                 process.kill()
                 return
             print(line.strip())
-        process.wait()  # ✅ Waits for the full video to finish playing
+        process.wait()
     except Exception as e:
         print(f"❌ FFmpeg crashed: {e}")
 
 def main():
-    while True:
-        movies = load_movies()
-        if not movies:
-            print(f"📂 No entries in {PLAY_FILE}. Retrying in {RETRY_DELAY}s...")
-            time.sleep(RETRY_DELAY)
-            continue
+    movies = load_movies()
+    if not movies:
+        print(f"📂 No entries in {PLAY_FILE}. Retrying in {RETRY_DELAY}s...")
+        time.sleep(RETRY_DELAY)
+        return main()
 
-        for movie in movies:
-            stream_movie(movie)
-            print("⏭️  Next movie in 5s...")
-            time.sleep(5)
+    index = 0
+    while True:
+        stream_movie(movies[index])
+        index = (index + 1) % len(movies)
+        print("⏭️  Next movie in 5s...")
+        time.sleep(5)
 
 if __name__ == "__main__":
     main()
