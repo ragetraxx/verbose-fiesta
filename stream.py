@@ -35,44 +35,50 @@ def escape_drawtext(text):
 def build_ffmpeg_command(url, title):
     text = escape_drawtext(title)
 
-    # ✅ Network input options: enable HTTP auto-reconnect & spoof Chrome User-Agent
+    # ✅ Network input options: Auto-reconnect & HTTP headers
     input_options = [
         "-reconnect", "1",
         "-reconnect_at_eof", "1",
         "-reconnect_streamed", "1",
         "-reconnect_delay_max", "5",
+        "-analyzeduration", "10000000",  # Analyzes 10M of data to properly read remote container headers
+        "-probesize", "10000000",
         "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
         "-headers", "Referer: https://screenify.fun\r\n"
     ]
 
     return [
         "ffmpeg",
-        # ❌ REMOVED: -fflags +nobuffer and -flags low_delay (allows stable network reading)
+        # ✅ Forces generation of clean presentation timestamps and discards corrupt frames
+        "-fflags", "+genpts+discardcorrupt",
         "-ss", str(PREBUFFER_SECONDS),
         *input_options,
-        "-i", url,             # Works with mkv, mp4, avi, mov, m3u8, etc.
+        "-thread_queue_size", "4096",  # Deep input queue to handle network packet arrival spikes
+        "-i", url,
+        "-thread_queue_size", "1024",
         "-i", OVERLAY,
         "-filter_complex",
-        # ✅ Lightened scaling algorithm and removed unsharp filter to minimize CPU load
+        # ✅ Clean scaling with bicubic flag to preserve CPU cycles for encoder stability
         f"[0:v]scale=1280:720:flags=bicubic[v];"
         f"[1:v]scale=1280:720[ol];"
         f"[v][ol]overlay=0:0[vo];"
         f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=20:x=35:y=35",
+        "-re",                           # Read native frame rate AFTER pre-buffering
         "-r", "29.97",
         "-c:v", "libx264",
-        "-preset", "veryfast",   # Keeps encoding fast while stabilizing video quality
-        "-tune", "zerolatency",
-        "-g", "60",              # Keyframe interval (every 2 seconds at 29.97 fps)
+        "-preset", "veryfast",           # Keeps encoding fast while stabilizing video quality
+        "-g", "60",                      # Strict 2-second keyframe interval
         "-keyint_min", "60",
         "-sc_threshold", "0",
-        "-b:v", "3000k",
-        "-maxrate", "3500k",
-        "-bufsize", "7000k",     # 2-second VBR buffer prevents RTMP stream drops
+        "-b:v", "2500k",                 # Stable broadcast bitrate
+        "-maxrate", "3000k",
+        "-bufsize", "6000k",             # 2-second leak buffer prevents RTMP starvation
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "48000",
         "-ac", "2",
+        "-af", "aresample=async=1",      # Continually syncs audio stream with video clock
         "-f", "flv",
         RTMP_URL
     ]
