@@ -80,7 +80,7 @@ def build_ffmpeg_command(movie):
         "-sc_threshold", "0",
         "-b:v", "2500k",                 # Stable target bitrate
         "-maxrate", "3000k",
-        "-bufsize", "6000k",             # 2-second rate control buffer
+        "-bufsize", "3000k",             # 2-second rate control buffer
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
