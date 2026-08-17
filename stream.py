@@ -36,7 +36,7 @@ def build_ffmpeg_command(movie):
     url = movie.get("url")
     text = escape_drawtext(title)
 
-    # ✅ Generic network input options (compatible with direct MP4, MKV, M3U8, HLS streams)
+    # ✅ Network input options (compatible with direct MP4, MKV, M3U8, HLS streams)
     input_options = [
         "-reconnect", "1",
         "-reconnect_at_eof", "1",
@@ -60,10 +60,10 @@ def build_ffmpeg_command(movie):
 
     return [
         "ffmpeg",
-        # ✅ Generate clean presentation timestamps for smooth continuous playback
+        "-re",                           # ✅ Fixed: -re MUST be placed before input (-i)
         "-fflags", "+genpts+discardcorrupt",
         *input_options,
-        "-thread_queue_size", "4096",  # Queue buffer to absorb network latency spikes
+        "-thread_queue_size", "4096",    # Input buffer to absorb network latency spikes
         "-i", url,
         "-thread_queue_size", "1024",
         "-i", OVERLAY,
@@ -72,7 +72,6 @@ def build_ffmpeg_command(movie):
         f"[1:v]scale=1280:720[ol];"
         f"[v][ol]overlay=0:0[vo];"
         f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=20:x=35:y=35",
-        "-re",                           # Read input stream at native rate
         "-r", "29.97",
         "-c:v", "libx264",
         "-preset", "veryfast",           # Fast, efficient H.264 encoding
