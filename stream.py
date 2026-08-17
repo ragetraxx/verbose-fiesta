@@ -9,7 +9,6 @@ RTMP_URL = os.getenv("RTMP_URL")
 OVERLAY = os.path.abspath("overlay.png")
 FONT_PATH = os.path.abspath("Roboto-Black.ttf")
 RETRY_DELAY = 60
-PREBUFFER_SECONDS = 5
 
 # ✅ Sanity Checks
 if not RTMP_URL:
@@ -32,53 +31,63 @@ def load_movies():
 def escape_drawtext(text):
     return text.replace('\\', '\\\\\\\\').replace(':', '\\:').replace("'", "\\'")
 
-def build_ffmpeg_command(url, title):
+def build_ffmpeg_command(movie):
+    title = movie.get("title", "Untitled")
+    url = movie.get("url")
     text = escape_drawtext(title)
 
-    # ✅ Network input options: Auto-reconnect & HTTP headers
+    # ✅ Generic network input options (compatible with direct MP4, MKV, M3U8, HLS streams)
     input_options = [
         "-reconnect", "1",
         "-reconnect_at_eof", "1",
         "-reconnect_streamed", "1",
         "-reconnect_delay_max", "5",
-        "-analyzeduration", "10000000",  # Analyzes 10M of data to properly read remote container headers
+        "-analyzeduration", "10000000",
         "-probesize", "10000000",
-        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-        "-headers", "Referer: https://screenify.fun\r\n"
+        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
     ]
+
+    # ✅ Optional: Dynamically attach custom referer/headers if specified in play.json entry
+    referer = movie.get("referer")
+    custom_headers = movie.get("headers")
+    header_str = ""
+    if referer:
+        header_str += f"Referer: {referer}\r\n"
+    if custom_headers:
+        header_str += f"{custom_headers}\r\n"
+    if header_str:
+        input_options.extend(["-headers", header_str])
 
     return [
         "ffmpeg",
-        # ✅ Forces generation of clean presentation timestamps and discards corrupt frames
+        # ✅ Generate clean presentation timestamps for smooth continuous playback
         "-fflags", "+genpts+discardcorrupt",
-        "-ss", str(PREBUFFER_SECONDS),
         *input_options,
-        "-thread_queue_size", "4096",  # Deep input queue to handle network packet arrival spikes
+        "-thread_queue_size", "4096",  # Queue buffer to absorb network latency spikes
         "-i", url,
         "-thread_queue_size", "1024",
         "-i", OVERLAY,
         "-filter_complex",
-        # ✅ Clean scaling with bicubic flag to preserve CPU cycles for encoder stability
         f"[0:v]scale=1280:720:flags=bicubic[v];"
         f"[1:v]scale=1280:720[ol];"
         f"[v][ol]overlay=0:0[vo];"
         f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=20:x=35:y=35",
-        "-re",                           # Read native frame rate AFTER pre-buffering
+        "-re",                           # Read input stream at native rate
         "-r", "29.97",
         "-c:v", "libx264",
-        "-preset", "veryfast",           # Keeps encoding fast while stabilizing video quality
-        "-g", "60",                      # Strict 2-second keyframe interval
+        "-preset", "veryfast",           # Fast, efficient H.264 encoding
+        "-g", "60",                      # Fixed 2-second keyframe interval
         "-keyint_min", "60",
         "-sc_threshold", "0",
-        "-b:v", "2500k",                 # Stable broadcast bitrate
+        "-b:v", "2500k",                 # Stable target bitrate
         "-maxrate", "3000k",
-        "-bufsize", "6000k",             # 2-second leak buffer prevents RTMP starvation
+        "-bufsize", "6000k",             # 2-second rate control buffer
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "48000",
         "-ac", "2",
-        "-af", "aresample=async=1",      # Continually syncs audio stream with video clock
+        "-af", "aresample=async=1",      # Keeps audio tightly synchronized with video
         "-f", "flv",
         RTMP_URL
     ]
@@ -92,17 +101,17 @@ def stream_movie(movie):
         return
 
     print(f"🎬 Now streaming: {title}")
-    command = build_ffmpeg_command(url, title)
+    command = build_ffmpeg_command(movie)
 
     try:
         process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         for line in process.stderr:
-            if "403 Forbidden" in line:
-                print(f"🚫 403 Forbidden! Skipping: {title}")
+            if "403 Forbidden" in line or "404 Not Found" in line or "Server returned 404" in line:
+                print(f"🚫 Stream URL error (403/404)! Skipping: {title}")
                 process.kill()
                 return
             print(line.strip())
-        process.wait()  # ✅ Waits for full movie to finish
+        process.wait()  # ✅ Waits for the full video to finish playing
     except Exception as e:
         print(f"❌ FFmpeg crashed: {e}")
 
