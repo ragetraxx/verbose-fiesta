@@ -35,37 +35,39 @@ def escape_drawtext(text):
 def build_ffmpeg_command(url, title):
     text = escape_drawtext(title)
 
-    # ✅ Always spoof Chrome User-Agent for all formats
+    # ✅ Network input options: enable HTTP auto-reconnect & spoof Chrome User-Agent
     input_options = [
+        "-reconnect", "1",
+        "-reconnect_at_eof", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
         "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-        "-headers", "Referer: https://imsa.com\r\n"
+        "-headers", "Referer: https://screenify.fun\r\n"
     ]
 
     return [
         "ffmpeg",
-        "-re",
-        "-fflags", "+nobuffer",
-        "-flags", "low_delay",
-        "-threads", "1",
+        # ❌ REMOVED: -fflags +nobuffer and -flags low_delay (allows stable network reading)
         "-ss", str(PREBUFFER_SECONDS),
         *input_options,
         "-i", url,             # Works with mkv, mp4, avi, mov, m3u8, etc.
         "-i", OVERLAY,
         "-filter_complex",
-        f"[0:v]scale=1280:720:flags=lanczos,unsharp=5:5:0.8:5:5:0.0[v];"
+        # ✅ Lightened scaling algorithm and removed unsharp filter to minimize CPU load
+        f"[0:v]scale=1280:720:flags=bicubic[v];"
         f"[1:v]scale=1280:720[ol];"
         f"[v][ol]overlay=0:0[vo];"
         f"[vo]drawtext=fontfile='{FONT_PATH}':text='{text}':fontcolor=white:fontsize=20:x=35:y=35",
         "-r", "29.97",
         "-c:v", "libx264",
-        "-preset", "ultrafast",
+        "-preset", "veryfast",   # Keeps encoding fast while stabilizing video quality
         "-tune", "zerolatency",
-        "-g", "60",
+        "-g", "60",              # Keyframe interval (every 2 seconds at 29.97 fps)
         "-keyint_min", "60",
         "-sc_threshold", "0",
-        "-b:v", "2000k",
+        "-b:v", "3000k",
         "-maxrate", "3500k",
-        "-bufsize", "3500k",
+        "-bufsize", "7000k",     # 2-second VBR buffer prevents RTMP stream drops
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
